@@ -29,20 +29,20 @@ MATCHSTR="The number of files are ${NUMFILES} and the number of matching lines a
 
 echo "Writing ${NUMFILES} files containing string ${WRITESTR} to ${WRITEDIR}"
 
-# Clean previous build artifacts
-echo "Cleaning previous build artifacts..."
-rm -f writer   # Remove the old writer binary if it exists
-rm -f *.o      # Remove any old object files if they exist
+# # Clean previous build artifacts
+# echo "Cleaning previous build artifacts..."
+# rm -f writer   # Remove the old writer binary if it exists
+# rm -f *.o      # Remove any old object files if they exist
 
-# Compile the writer utility using native compilation (assuming writer.c is the C source file)
-echo "Compiling writer utility..."
-gcc -o writer writer.c
+# # Compile the writer utility using native compilation (assuming writer.c is the C source file)
+# echo "Compiling writer utility..."
+# gcc -o writer writer.c
 
-# Ensure the writer compiled correctly
-if [ ! -f writer ]; then
-    echo "Compilation failed. Exiting."
-    exit 1
-fi
+# # Ensure the writer compiled correctly
+# if [ ! -f writer ]; then
+#     echo "Compilation failed. Exiting."
+#     exit 1
+# fi
 
 # Create the directory if it's for assignment 2
 assignment=$(cat ../conf/assignment.txt)
