@@ -37,7 +37,6 @@ void cleanup() {
     closelog();                // Close system log
 }
 
-
 void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     char buffer[1024];  // Buffer to store received data
     int data_fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0644); // Open data file
@@ -78,11 +77,54 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
 }
 
+void daemonize() {
+    pid_t pid = fork(); // Fork the process
+
+    if (pid < 0) { // Check if fork failed
+        // Fork failed
+        syslog(LOG_ERR, "Fork failed: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0) { // Check if parent process
+        // Parent process, exit
+        exit(EXIT_SUCCESS);
+    }
+
+    // Child process continues
+    if (setsid() < 0) { // Create a new session
+        syslog(LOG_ERR, "setsid failed: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    // Redirect standard file descriptors to /dev/null
+    close(STDIN_FILENO); // Close standard input
+    close(STDOUT_FILENO); // Close standard output
+    close(STDERR_FILENO); // Close standard error
+    open("/dev/null", O_RDONLY); // Open /dev/null as standard input
+    open("/dev/null", O_RDWR); // Open /dev/null as standard output
+    open("/dev/null", O_RDWR); // Open /dev/null as standard error
+}
+
 // Main function
-int main() {
+int main(int argc, char *argv[]) {
     struct sockaddr_in server_addr, client_addr;      // Server and client address structures
     socklen_t client_addr_len = sizeof(client_addr);  // Length of client address structure
     int opt = 1;                                      // Option value for setsockopt
+    bool daemon_mode = false;                         // Flag to indicate if daemon mode is enabled
+
+    // Parse command-line arguments
+    int c;                                            // Variable to store parsed option
+    while ((c = getopt(argc, argv, "d")) != -1) {     // Parse command-line options
+        switch (c) {                                  // Check the parsed option
+            case 'd':                                 // Daemon mode option
+                daemon_mode = true;                   // Enable daemon mode
+                break;                                // Break the switch statement
+            default:                                  // Invalid option
+                fprintf(stderr, "Usage: %s [-d]\n", argv[0]); // Print usage message
+                exit(EXIT_FAILURE);                   // Exit with failure code
+        }
+    }
 
     openlog("aesdsocket", LOG_PID, LOG_USER);         // Open system log
 
@@ -120,6 +162,11 @@ int main() {
         syslog(LOG_ERR, "Failed to bind socket: %s", strerror(errno)); // Log error message
         cleanup();                                    // Clean up resources
         return -1;                                    // Return error code
+    }
+
+    // Daemonize if the -d argument is provided
+    if (daemon_mode) {
+        daemonize();
     }
 
     // // Log success message
