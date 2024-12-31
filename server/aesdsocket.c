@@ -55,6 +55,8 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     ssize_t bytes_received; // Number of bytes received
     while ((bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0)) > 0) { // Receive data from client
         buffer[bytes_received] = '\0'; // Null-terminate the received data
+        syslog(LOG_DEBUG, "Received data: %s", buffer); // Log received data
+
         if (write(data_fd, buffer, bytes_received) == -1) { // Write data to file
             syslog(LOG_ERR, "Failed to write to data file: %s", strerror(errno)); // Log error message
             break; // Break the loop
@@ -63,6 +65,8 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
         if (strchr(buffer, '\n')) { // Check if the received data contains a newline character
             lseek(data_fd, 0, SEEK_SET); // Move file pointer to the beginning of the file
             while ((bytes_received = read(data_fd, buffer, sizeof(buffer))) > 0) { // Read data from file
+                syslog(LOG_DEBUG, "Read data from file: %s", buffer); // Log read data
+                
                 if (send(client_socket, buffer, bytes_received, 0) == -1) { // Send data to client
                     syslog(LOG_ERR, "Failed to send data to client: %s", strerror(errno)); // Log error message
                     break; // Break the loop
