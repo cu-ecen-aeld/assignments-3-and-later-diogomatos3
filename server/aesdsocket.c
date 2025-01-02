@@ -38,7 +38,8 @@ void cleanup() {
 }
 
 void handle_client(int client_socket, struct sockaddr_in *client_addr) {
-    char buffer[1024];  // Buffer to store received data
+    char buffer[1024] = {0};  // Buffer to store received data (zero-initialized)
+    memset(buffer, 0, sizeof(buffer));
     int data_fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0644); // Open data file
 
     if (data_fd == -1) { // Check if data file was opened
@@ -52,27 +53,36 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
     // Receive data from client
-    ssize_t bytes_received; // Number of bytes received
-    while ((bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0)) > 0) { // Receive data from client
+    bool keep_running = true;
+    ssize_t bytes_received = 0; // Number of bytes received
+    while (keep_running == true) { // Receive data from client
+        bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
         buffer[bytes_received] = '\0'; // Null-terminate the received data
+        syslog(LOG_INFO, "Bytes read: %zd", bytes_received); // Log the ssize_t variable
         syslog(LOG_DEBUG, "Received data: %s", buffer); // Log received data
 
-        if (write(data_fd, buffer, bytes_received) == -1) { // Write data to file
-            syslog(LOG_ERR, "Failed to write to data file: %s", strerror(errno)); // Log error message
-            break; // Break the loop
+        if (bytes_received > 0)
+        {
+            if (write(data_fd, buffer, bytes_received) == -1) { // Write data to file
+                syslog(LOG_ERR, "Failed to write to data file: %s", strerror(errno)); // Log error message
+                break; // Break the loop
+            }
         }
+        
 
         if (strchr(buffer, '\n')) { // Check if the received data contains a newline character
             lseek(data_fd, 0, SEEK_SET); // Move file pointer to the beginning of the file
+            
+            memset(buffer, 0, sizeof(buffer));
             while ((bytes_received = read(data_fd, buffer, sizeof(buffer))) > 0) { // Read data from file
-                syslog(LOG_DEBUG, "Read data from file: %s", buffer); // Log read data
                 
                 if (send(client_socket, buffer, bytes_received, 0) == -1) { // Send data to client
                     syslog(LOG_ERR, "Failed to send data to client: %s", strerror(errno)); // Log error message
                     break; // Break the loop
                 }
             }
-        }
+            keep_running = false;
+        }        
     }
 
     // Close client socket
