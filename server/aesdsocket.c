@@ -11,6 +11,9 @@
 #include <syslog.h>     // For system logging
 #include <fcntl.h>      // For file control options
 #include <stdbool.h>    // For boolean data type
+// #include <pthread.h>    // For POSIX threads
+// #include <time.h>       // For time functions
+// #include <sys/queue.h>  // For queue functions
 
 #define PORT 9000       // Port number to listen on
 #define BACKLOG 10      // Number of pending connections in the listen queue
@@ -19,6 +22,29 @@
 // Global variables
 int server_socket = -1;  // Server socket file descriptor
 bool running = true;     // Flag to indicate if the server is running
+// pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex to protect file access
+
+// typedef struct {
+//     int client_socket;
+//     struct sockaddr_in client_addr;
+// } thread_args_t; // Thread arguments structure
+
+// typedef struct thread_entry {
+//     pthread_t thread_id;
+//     thread_args_t *args;
+//     SLIST_ENTRY(thread_entry) entries;
+// } thread_entry_t; // Thread entry structure
+
+// SLIST_HEAD(thread_list, thread_entry) head = SLIST_HEAD_INITIALIZER(head);
+// pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// // Thread function to handle each client connection:
+// void* thread_func(void* arg) {
+//     thread_args_t *args = (thread_args_t*)arg;
+//     handle_client(args->client_socket, &args->client_addr);
+//     free(args);
+//     return NULL;
+// }
 
 // Signal handler function definition
 void signal_handler(int signal) { 
@@ -37,6 +63,7 @@ void cleanup() {
     closelog();                // Close system log
 }
 
+// Function to handle each client connection
 void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     char buffer[1024] = {0};  // Buffer to store received data (zero-initialized)
     memset(buffer, 0, sizeof(buffer));
@@ -63,10 +90,12 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
 
         if (bytes_received > 0)
         {
+            // pthread_mutex_lock(&file_mutex); // Lock the mutex
             if (write(data_fd, buffer, bytes_received) == -1) { // Write data to file
                 syslog(LOG_ERR, "Failed to write to data file: %s", strerror(errno)); // Log error message
                 break; // Break the loop
             }
+            // pthread_mutex_unlock(&file_mutex); // Unlock the mutex
         }
         
 
@@ -91,6 +120,7 @@ void handle_client(int client_socket, struct sockaddr_in *client_addr) {
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
 }
 
+// Function to daemonize the process
 void daemonize() {
     pid_t pid = fork(); // Fork the process
 
@@ -120,12 +150,33 @@ void daemonize() {
     open("/dev/null", O_RDWR); // Open /dev/null as standard error
 }
 
+// // Thread function to write timestamp to file
+// void* timestamp_thread_func(void* arg) {
+//     while (running) {
+//         sleep(10);
+//         time_t now = time(NULL);
+//         struct tm *tm_info = localtime(&now);
+//         char timestamp[64];
+//         strftime(timestamp, sizeof(timestamp), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
+
+//         pthread_mutex_lock(&file_mutex);
+//         int data_fd = open(DATA_FILE, O_WRONLY | O_APPEND);
+//         if (data_fd != -1) {
+//             write(data_fd, timestamp, strlen(timestamp));
+//             close(data_fd);
+//         }
+//         pthread_mutex_unlock(&file_mutex);
+//     }
+//     return NULL;
+// }
+
 // Main function
 int main(int argc, char *argv[]) {
     struct sockaddr_in server_addr, client_addr;      // Server and client address structures
     socklen_t client_addr_len = sizeof(client_addr);  // Length of client address structure
     int opt = 1;                                      // Option value for setsockopt
     bool daemon_mode = false;                         // Flag to indicate if daemon mode is enabled
+    // pthread_t timestamp_thread;                       // Thread ID variable for timestamp thread
 
     // Parse command-line arguments
     int c;                                            // Variable to store parsed option
@@ -149,6 +200,16 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, NULL);                     // Register signal handler for SIGINT
     sigaction(SIGTERM, &sa, NULL);                    // Register signal handler for SIGTERM
     sigaction(SIGTSTP, &sa, NULL);                    // Register signal handler for SIGTSTP
+
+    // SLIST_INIT(&head);                                // Initialize the thread list
+
+    // pthread_t timestamp_thread;                       // Thread ID variable for timestamp thread
+    // // Create a new thread to write timestamp to file
+    // if (pthread_create(&timestamp_thread, NULL, timestamp_thread_func, NULL) != 0) {
+    //     syslog(LOG_ERR, "Failed to create timestamp thread: %s", strerror(errno));
+    //     cleanup();
+    //     exit(EXIT_FAILURE);
+    // }    
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);  // Create a new socket
     if (server_socket == -1) {                        // Check if socket creation was successful
@@ -208,10 +269,39 @@ int main(int argc, char *argv[]) {
         syslog(LOG_INFO, "Accepted connection from: %s, port: %d",
                inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
+    //     thread_args_t *args = malloc(sizeof(thread_args_t)); // Allocate memory for thread arguments
+    //     args->client_socket = client_socket;                 // Set client socket
+    //     args->client_addr = client_addr;                     // Set client address
+
+    //     thread_entry_t *entry = malloc(sizeof(thread_entry_t)); // Allocate memory for thread entry
+    //     entry->args = args; // Set thread arguments
+
+    //     // Create a new thread to handle the client connection
+    //     if (pthread_create(&entry->thread_id, NULL, thread_func, args) != 0) { // Create thread
+    //         syslog(LOG_ERR, "Failed to create thread: %s", strerror(errno));   // Log error message
+    //         close(client_socket);                                              // Close client socket
+    //         free(args);                                                        // Free thread arguments
+    //         free(entry);                                                       // Free thread entry
+    //     } else {
+    //         pthread_mutex_lock(&list_mutex);                                   // Lock the list mutex
+    //         SLIST_INSERT_HEAD(&head, entry, entries);                          // Insert thread entry into list
+    //         pthread_mutex_unlock(&list_mutex);                                 // Unlock the list mutex
+    //     }
         // Handle client request
         handle_client(client_socket, &client_addr);
     }
 
-    cleanup();
+    // pthread_mutex_lock(&list_mutex);                                           // Lock the list mutex
+    // thread_entry_t *entry;                                                     // Thread entry pointer
+    // // Iterate over the list of threads
+    // SLIST_FOREACH(entry, &head, entries) {
+    //     pthread_join(entry->thread_id, NULL); // Join the thread
+    //     free(entry->args);                    // Free thread arguments
+    //     free(entry);                          // Free thread entry
+    // }
+    // pthread_mutex_unlock(&list_mutex);        // Unlock the list mutex
+
+    // pthread_join(timestamp_thread, NULL);     // Join the timestamp thread
+    cleanup();                                        // Clean up resources
     return 0;                                         // Return success code
 }
