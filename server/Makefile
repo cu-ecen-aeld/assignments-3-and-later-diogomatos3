@@ -1,7 +1,7 @@
 # Compiler settings
 CC = gcc
 CFLAGS = -Wall -g
-LDFLAGS = 
+LDFLAGS ?= -lpthread -lrt
 
 # Cross-compilation settings
 ifneq ($(CROSS_COMPILE),)
