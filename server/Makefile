@@ -1,5 +1,5 @@
 # Compiler settings
-CC = gcc
+CC ?= $(CROSS_COMPILE)gcc
 CFLAGS = -Wall -g
 LDFLAGS ?= -lpthread -lrt
 
