@@ -18,6 +18,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include <linux/slab.h> // for kfree and kmalloc
+#include <linux/uaccess.h> // for copy_to_user and copy_from_user
 #include "aesdchar.h"
 #include "aesd-circular-buffer.h" // Ensure this header is included for buffer functions
 int aesd_major =   0; // use dynamic major
@@ -118,9 +119,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     char *kbuf = NULL, *new_buf = NULL;
     struct aesd_buffer_entry entry, *old_entry = NULL;
     ssize_t retval = -ENOMEM;
-    size_t new_size, i, copy_offset = 0;
+    size_t new_size, copy_offset = 0;
     char *newline_ptr = NULL;
-    size_t bytes_to_copy;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
     if (mutex_lock_killable(&dev->lock))
@@ -240,6 +240,7 @@ int aesd_init_module(void)
 {
     dev_t dev = 0;
     int result;
+    int i; // Needed for AESD_CIRCULAR_BUFFER_FOREACH
     result = alloc_chrdev_region(&dev, aesd_minor, 1,
             "aesdchar");
     aesd_major = MAJOR(dev);
@@ -282,6 +283,7 @@ void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
     struct aesd_buffer_entry *entry;
+    int i; // Needed for AESD_CIRCULAR_BUFFER_FOREACH
     /**
      * Iterate over all entries in the AESD circular buffer and free any allocated memory.
      * The AESD_CIRCULAR_BUFFER_FOREACH macro is defined in aesd-circular-buffer.h and
