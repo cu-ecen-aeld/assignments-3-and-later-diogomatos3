@@ -112,39 +112,91 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     struct aesd_dev *dev = filp->private_data;
-    char *kbuf;
+    char *kbuf = NULL, *new_buf = NULL;
     struct aesd_buffer_entry entry, *old_entry = NULL;
     ssize_t retval = -ENOMEM;
+    size_t new_size, i, copy_offset = 0;
+    char *newline_ptr = NULL;
+    size_t bytes_to_copy;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
     if (mutex_lock_killable(&dev->lock))
         return -ERESTARTSYS;
 
+    // Allocate kernel buffer for incoming data
     kbuf = kmalloc(count, GFP_KERNEL);
     if (!kbuf) {
         retval = -ENOMEM;
         goto out;
     }
-
     if (copy_from_user(kbuf, buf, count)) {
         kfree(kbuf);
         retval = -EFAULT;
         goto out;
     }
 
-    entry.buffptr = kbuf;
-    entry.size = count;
-
-    // Always add a new entry; if the buffer is full, free the memory of the entry being overwritten
-    if (dev->buffer.full) {
-        old_entry = &dev->buffer.entry[dev->buffer.out_offs];
-        if (old_entry->buffptr) {
-            kfree(old_entry->buffptr);
-            old_entry->buffptr = NULL;
-            old_entry->size = 0;
+    // If there is a partial write, append new data to it
+    if (dev->partial_write_buf) {
+        new_size = dev->partial_write_size + count;
+        new_buf = kmalloc(new_size, GFP_KERNEL);
+        if (!new_buf) {
+            kfree(kbuf);
+            retval = -ENOMEM;
+            goto out;
         }
+        memcpy(new_buf, dev->partial_write_buf, dev->partial_write_size);
+        memcpy(new_buf + dev->partial_write_size, kbuf, count);
+        kfree(dev->partial_write_buf);
+        kfree(kbuf);
+        dev->partial_write_buf = new_buf;
+        dev->partial_write_size = new_size;
+    } else {
+        dev->partial_write_buf = kbuf;
+        dev->partial_write_size = count;
     }
-    aesd_circular_buffer_add_entry(&dev->buffer, &entry);
+
+    // Now, process the buffer for any complete commands (ending with '\n')
+    while ((newline_ptr = memchr(dev->partial_write_buf + copy_offset, '\n', dev->partial_write_size - copy_offset))) {
+        size_t cmd_len = (newline_ptr - dev->partial_write_buf) + 1;
+        char *cmd_buf = kmalloc(cmd_len, GFP_KERNEL);
+        if (!cmd_buf) {
+            retval = -ENOMEM;
+            goto out;
+        }
+        memcpy(cmd_buf, dev->partial_write_buf, cmd_len);
+        entry.buffptr = cmd_buf;
+        entry.size = cmd_len;
+        // If buffer is full, free the memory of the entry being overwritten
+        if (dev->buffer.full) {
+            old_entry = &dev->buffer.entry[dev->buffer.out_offs];
+            if (old_entry->buffptr) {
+                kfree(old_entry->buffptr);
+                old_entry->buffptr = NULL;
+                old_entry->size = 0;
+            }
+        }
+        aesd_circular_buffer_add_entry(&dev->buffer, &entry);
+        copy_offset = cmd_len;
+    }
+
+    // If there is leftover data after the last '\n', keep it as the new partial write
+    if (copy_offset < dev->partial_write_size) {
+        size_t leftover = dev->partial_write_size - copy_offset;
+        char *leftover_buf = kmalloc(leftover, GFP_KERNEL);
+        if (!leftover_buf) {
+            retval = -ENOMEM;
+            goto out;
+        }
+        memcpy(leftover_buf, dev->partial_write_buf + copy_offset, leftover);
+        kfree(dev->partial_write_buf);
+        dev->partial_write_buf = leftover_buf;
+        dev->partial_write_size = leftover;
+    } else {
+        kfree(dev->partial_write_buf);
+        dev->partial_write_buf = NULL;
+        dev->partial_write_size = 0;
+    }
+
     retval = count;
 
 out:
