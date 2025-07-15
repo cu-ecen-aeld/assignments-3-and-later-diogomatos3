@@ -69,22 +69,25 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry *entry;
     size_t entry_offset = 0;
     size_t bytes_to_copy;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
 
     if (mutex_lock_killable(&dev->lock))
         return -ERESTARTSYS;
 
+    // Find the buffer entry and offset for the current file position
     entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->buffer, *f_pos, &entry_offset);
     if (!entry) {
-        retval = 0; // No data available
+        retval = 0; // No data available (EOF)
         goto out;
     }
 
+    // If the offset is beyond the entry size, nothing to read
     if (entry_offset >= entry->size) {
-        retval = 0; // No more data to read in this entry
+        retval = 0;
         goto out;
     }
 
+    // Only return up to 'count' bytes per read
     bytes_to_copy = min(count, entry->size - entry_offset);
 
     if (copy_to_user(buf, entry->buffptr + entry_offset, bytes_to_copy)) {
@@ -92,7 +95,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         goto out;
     }
 
-    *f_pos += bytes_to_copy;
+    *f_pos += bytes_to_copy; // Advance file position
     retval = bytes_to_copy;
 
 out:
