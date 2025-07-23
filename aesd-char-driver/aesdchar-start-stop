@@ -1,0 +1,25 @@
+#! /bin/sh
+
+case "$1" in
+    start)
+        # If the argument is "start", print a message and start the aesdchar daemon
+        echo "Starting aesdchar"
+        start-stop-daemon -S -n initchardriver -a /bin/aesdchar_load
+        ;;
+    stop)
+        # If the argument is "stop", print a message and stop the aesdchar daemon
+        echo "Stopping aesdchar"
+        start-stop-daemon -K -n initchardriver
+        start-stop-daemon -S -n unloadchardriver -a /bin/aesdchar_unload
+        ;;
+    *)
+        # If the argument is not "start" or "stop", print usage information and exit with an error code
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
+
+# Exit the script successfully
+exit 0
+
+
