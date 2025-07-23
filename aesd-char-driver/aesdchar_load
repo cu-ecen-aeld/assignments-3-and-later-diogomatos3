@@ -1,6 +1,7 @@
 #!/bin/sh
 module=aesdchar
 device=aesdchar
+module_path="/lib/modules/$(uname -r)/extra/${module}.ko"
 mode="664"
 cd `dirname $0`
 set -e
@@ -11,9 +12,9 @@ else
     group="wheel"
 fi
 
-if [ -e ${module}.ko ]; then
+if [ -e "${module_path}" ]; then
     echo "Loading local built file ${module}.ko"
-    insmod ./$module.ko $* || exit 1
+    insmod "${module_path}" $* || exit 1
 else
     echo "Local file ${module}.ko not found, attempting to modprobe"
     modprobe ${module} || exit 1
