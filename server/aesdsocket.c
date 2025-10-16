@@ -15,6 +15,8 @@
 #include <time.h>       // For time functions
 #include <sys/queue.h>  // For queue functions
 #include <sys/time.h>   // For struct timeval
+#include <sys/ioctl.h> // For ioctl
+#include "../aesd-char-driver/aesd_ioctl.h" // For AESDCHAR_IOCSEEKTO
 
 #define PORT 9000       // Port number to listen on
 #define BACKLOG 10      // Number of pending connections in the listen queue
@@ -72,16 +74,54 @@ void *client_handler(void *arg) {
     int data_fd;
 
     // Main receive loop for this client
-    while ((bytes_received = recv(client_socket, buffer, sizeof(buffer), 0)) > 0) {
-        syslog(LOG_INFO, "Received %zd bytes of data", bytes_received);
-        // Lock file access to ensure thread safety
-        pthread_mutex_lock(&file_mutex);
-        // Open the data file or device for appending
-        data_fd = open(DATA_FILE, O_RDWR | O_APPEND
+    // Keep the file descriptor open for the entire session
+    data_fd = open(DATA_FILE, O_RDWR | O_APPEND
 #if !USE_AESD_CHAR_DEVICE
         | O_CREAT
 #endif
         , 0644);
+    if (data_fd == -1) {
+        syslog(LOG_ERR, "Failed to open data file: %s", strerror(errno));
+        return NULL;
+    }
+
+    while ((bytes_received = recv(client_socket, buffer, sizeof(buffer), 0)) > 0) {
+        syslog(LOG_INFO, "Received %zd bytes of data", bytes_received);
+        // Lock file access to ensure thread safety
+        pthread_mutex_lock(&file_mutex);
+
+        // Check if this is a seek command
+        if (bytes_received > 16 && strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
+            // Parse X,Y values
+            unsigned int cmd_num, cmd_offset;
+            if (sscanf(buffer + 19, "%u,%u", &cmd_num, &cmd_offset) == 2) {
+                struct aesd_seekto seekto;
+                seekto.write_cmd = cmd_num;
+                seekto.write_cmd_offset = cmd_offset;
+                
+                // Perform the ioctl
+                if (ioctl(data_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+                    syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failed: %s", strerror(errno));
+                } else {
+                    syslog(LOG_INFO, "Successfully performed seek to command %u offset %u", 
+                           cmd_num, cmd_offset);
+                }
+                
+                // Read and send back the content from the current position
+                lseek(data_fd, 0, SEEK_SET); // Reset to beginning for full content
+                ssize_t bytes_read;
+                while ((bytes_read = read(data_fd, buffer, sizeof(buffer))) > 0) {
+                    ssize_t bytes_sent = send(client_socket, buffer, bytes_read, 0);
+                    if (bytes_sent < 0) {
+                        syslog(LOG_ERR, "Failed to send data: %s", strerror(errno));
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&file_mutex);
+                continue; // Skip the normal write handling
+            }
+            // If sscanf failed, treat as normal input
+        }
         if (data_fd == -1) {
             syslog(LOG_ERR, "Failed to open data file: %s", strerror(errno));
             pthread_mutex_unlock(&file_mutex);
