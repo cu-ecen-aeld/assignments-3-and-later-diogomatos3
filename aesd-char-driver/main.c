@@ -21,6 +21,7 @@
 #include <linux/uaccess.h> // for copy_to_user and copy_from_user
 #include "aesdchar.h"
 #include "aesd-circular-buffer.h" // Ensure this header is included for buffer functions
+#include "aesd_ioctl.h" // Include the ioctl header
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -52,6 +53,64 @@ int aesd_release(struct inode *inode, struct file *filp)
     PDEBUG("release");
     /* No special cleanup required on release */
     return 0;
+}
+
+/**
+ * @brief Handle seek operations on the character device
+ * @param filp File pointer
+ * @param offset Offset to seek to
+ * @param whence SEEK_SET, SEEK_CUR, or SEEK_END
+ * @return New position after seek, or negative error code
+ */
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
+{
+    loff_t newpos;
+    struct aesd_dev *dev = filp->private_data;
+    size_t total_size = 0;
+    struct aesd_buffer_entry *entry;
+    uint8_t index;
+    PDEBUG("llseek offset=%lld, whence=%d", offset, whence);
+
+    // Lock the device while we calculate positions
+    if (mutex_lock_killable(&dev->lock))
+        return -ERESTARTSYS;
+
+    // Calculate total size of all entries for SEEK_END
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->buffer, index) {
+        if (entry->buffptr && entry->size > 0) {
+            total_size += entry->size;
+        }
+    }
+
+    switch(whence) {
+        case SEEK_SET:
+            newpos = offset;
+            break;
+        case SEEK_CUR:
+            newpos = filp->f_pos + offset;
+            break;
+        case SEEK_END:
+            newpos = total_size + offset;
+            break;
+        default:
+            mutex_unlock(&dev->lock);
+            return -EINVAL;
+    }
+
+    if (newpos < 0) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    // Verify the new position is within bounds
+    if (newpos > total_size) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    filp->f_pos = newpos;
+    mutex_unlock(&dev->lock);
+    return newpos;
 }
 
 /*
@@ -206,12 +265,77 @@ out:
     mutex_unlock(&dev->lock);
     return retval;
 }
+
+/**
+ * @brief Handles IOCTL commands for the AESD char driver
+ * @param filp File pointer
+ * @param cmd The IOCTL command
+ * @param arg The argument for the IOCTL command
+ * @return 0 on success, negative error code on failure
+ */
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_seekto seekto;
+    int cmd_index;
+    size_t total_offset = 0;
+    struct aesd_buffer_entry *entry;
+    uint8_t index;
+    loff_t new_pos = 0;
+
+    PDEBUG("ioctl cmd=%u, arg=%lu", cmd, arg);
+
+    if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) return -ENOTTY;
+    if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) return -ENOTTY;
+
+    if (mutex_lock_killable(&dev->lock))
+        return -ERESTARTSYS;
+
+    switch (cmd) {
+        case AESDCHAR_IOCSEEKTO:
+            if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto))) {
+                mutex_unlock(&dev->lock);
+                return -EFAULT;
+            }
+
+            // Find the correct command and offset
+            cmd_index = 0;
+            AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->buffer, index) {
+                if (!entry->buffptr || !entry->size)
+                    continue;
+
+                if (cmd_index == seekto.write_cmd) {
+                    // Check if offset is within bounds of this command
+                    if (seekto.write_cmd_offset >= entry->size) {
+                        mutex_unlock(&dev->lock);
+                        return -EINVAL;
+                    }
+                    new_pos = total_offset + seekto.write_cmd_offset;
+                    filp->f_pos = new_pos;
+                    mutex_unlock(&dev->lock);
+                    return 0;
+                }
+                total_offset += entry->size;
+                cmd_index++;
+            }
+            // If we get here, the command number was out of range
+            mutex_unlock(&dev->lock);
+            return -EINVAL;
+
+        default:
+            mutex_unlock(&dev->lock);
+            return -ENOTTY;
+    }
+}
+
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
+    .owner =          THIS_MODULE,
+    .read =           aesd_read,
+    .write =          aesd_write,
+    .open =           aesd_open,
+    .release =        aesd_release,
+    .llseek =         aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
