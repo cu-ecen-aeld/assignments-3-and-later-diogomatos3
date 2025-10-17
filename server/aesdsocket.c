@@ -107,8 +107,7 @@ void *client_handler(void *arg) {
                            cmd_num, cmd_offset);
                 }
                 
-                // Read and send back the content from the current position
-                lseek(data_fd, 0, SEEK_SET); // Reset to beginning for full content
+                // Read and send back the content from the current position (already set by IOCTL)
                 ssize_t bytes_read;
                 while ((bytes_read = read(data_fd, buffer, sizeof(buffer))) > 0) {
                     ssize_t bytes_sent = send(client_socket, buffer, bytes_read, 0);
